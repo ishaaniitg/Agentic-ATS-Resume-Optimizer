@@ -47,8 +47,11 @@ def candidate_mode(
 class CandidateRanking:
     resume_path: str
     score: float
+    keyword_score: float
+    semantic_score: float
     matched_keywords: list[str]
     missing_keywords: list[str]
+    conceptual_gaps: list[str]
     error: str | None = None
 
 
@@ -66,13 +69,16 @@ def employer_mode(resume_paths: list[str], jd_text: str) -> list[CandidateRankin
             rankings.append(CandidateRanking(
                 resume_path=path,
                 score=result.score,
+                keyword_score=result.keyword_score,
+                semantic_score=result.semantic_score,
                 matched_keywords=result.matched_keywords,
                 missing_keywords=result.missing_keywords,
+                conceptual_gaps=result.conceptual_gaps,
             ))
         except (ParseError, ValueError) as exc:
             rankings.append(CandidateRanking(
-                resume_path=path, score=0.0, matched_keywords=[],
-                missing_keywords=[], error=str(exc),
+                resume_path=path, score=0.0, keyword_score=0.0, semantic_score=0.0,
+                matched_keywords=[], missing_keywords=[], conceptual_gaps=[], error=str(exc),
             ))
 
     rankings.sort(key=lambda r: r.score, reverse=True)

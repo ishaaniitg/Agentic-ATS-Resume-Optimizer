@@ -1,6 +1,7 @@
 """Streamlit UI: a thin manual-testing surface over the existing Phase 1-4
 pipeline. Every button below calls the existing src/* functions directly --
 no parsing, scoring, rewriting, or ranking logic is reimplemented here.
+Everything in this file is presentation only (layout, CSS, diff rendering).
 
 Entry points used (see PLAN.md phases 1-4):
   - src.parser.parse_resume          (Phase 1)
@@ -9,8 +10,11 @@ Entry points used (see PLAN.md phases 1-4):
     src.modes.candidate_mode, because the UI needs the per-iteration
     history/changed_sections that candidate_mode discards)
   - src.modes.employer_mode          (Phase 4, employer mode wrapper)
+  - src.pdf_generator.generate_resume_pdf  (tailored-resume PDF download)
 """
 
+import difflib
+import html
 import os
 import tempfile
 
@@ -20,77 +24,341 @@ from google.genai import errors as genai_errors
 from src.agent_loop import DEFAULT_MAX_ITERATIONS, DEFAULT_TARGET_SCORE, run_rewrite_loop
 from src.modes import employer_mode
 from src.parser import ParseError, parse_resume
+from src.pdf_generator import generate_resume_pdf
+from src.rewriter import get_active_model_status
 from src.scorer import score_resume
 
-st.set_page_config(page_title="Resume Tailor -- Manual Test UI", layout="wide")
-st.title("Resume Tailor -- Manual Test UI")
-st.caption(
-    "Thin debugging surface over src/parser.py, src/scorer.py, src/agent_loop.py "
-    "and src/modes.py. No pipeline logic lives in this file."
+st.set_page_config(
+    page_title="Resume Tailor -- AI ATS Optimizer",
+    page_icon="🎯",
+    layout="wide",
 )
 
-mode = st.radio("Mode", ["Candidate", "Employer"], horizontal=True)
+# ---------------------------------------------------------------- styling --
+
+st.markdown(
+    """
+    <style>
+    :root {
+      --accent: #4f46e5;
+      --accent-light: #eef2ff;
+      --success: #16a34a;
+      --success-bg: #dcfce7;
+      --danger: #dc2626;
+      --danger-bg: #fee2e2;
+      --warn: #d97706;
+      --warn-bg: #fef3c7;
+      --border: #e2e8f0;
+      --text-muted: #64748b;
+    }
+
+    .app-hero {
+      background: linear-gradient(135deg, var(--accent) 0%, #7c3aed 100%);
+      color: white;
+      padding: 1.75rem 2rem;
+      border-radius: 14px;
+      margin-bottom: 1.25rem;
+    }
+    .app-hero h1 { margin: 0 0 .4rem 0; font-size: 1.6rem; }
+    .app-hero p { margin: 0; opacity: .92; font-size: .95rem; line-height: 1.55; max-width: 760px; }
+
+    .section-label {
+      font-size: .76rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--text-muted);
+      margin: 1.5rem 0 .5rem 0;
+    }
+
+    .score-card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.25rem .5rem 1.25rem;
+      background: white;
+    }
+    .score-card .score-label { color: var(--text-muted); font-size: .8rem; margin-bottom: .15rem; }
+    .score-card .score-value { font-size: 2.2rem; font-weight: 800; line-height: 1.1; }
+    .score-good .score-value { color: var(--success); }
+    .score-mid .score-value { color: var(--warn); }
+    .score-low .score-value { color: var(--danger); }
+
+    .stat-card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: .9rem 1.1rem;
+      background: white;
+      text-align: center;
+    }
+    .stat-card .stat-label { color: var(--text-muted); font-size: .78rem; margin-bottom: .2rem; }
+    .stat-card .stat-value { font-size: 1.5rem; font-weight: 800; }
+    .pill-yes { color: var(--success); }
+    .pill-no { color: var(--danger); }
+
+    .badge {
+      display: inline-block;
+      padding: .2rem .7rem;
+      border-radius: 999px;
+      font-size: .8rem;
+      font-weight: 600;
+      margin: .15rem .3rem .15rem 0;
+    }
+    .badge-matched { background: var(--success-bg); color: var(--success); }
+    .badge-missing { background: var(--danger-bg); color: var(--danger); }
+
+    .info-banner {
+      border: 1px solid var(--accent);
+      background: var(--accent-light);
+      color: #3730a3;
+      border-radius: 10px;
+      padding: .8rem 1.1rem;
+      font-size: .88rem;
+      margin: .6rem 0 1rem 0;
+    }
+
+    .diff-box {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fafafa;
+      padding: .6rem .8rem;
+      font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: .8rem;
+      max-height: 320px;
+      overflow-y: auto;
+    }
+    .diff-line { padding: .05rem .35rem; border-radius: 3px; white-space: pre-wrap; margin: .05rem 0; }
+    .diff-add { background: var(--success-bg); color: #166534; }
+    .diff-del { background: var(--danger-bg); color: #991b1b; }
+    .diff-eq { color: #475569; }
+
+    .footnote { color: var(--text-muted); font-size: .78rem; margin-top: 2rem; }
+
+    .model-badge {
+      display: inline-block;
+      background: var(--accent-light);
+      color: #3730a3;
+      border: 1px solid var(--accent);
+      border-radius: 999px;
+      padding: .35rem .9rem;
+      font-size: .82rem;
+      font-weight: 600;
+      margin-bottom: 1.25rem;
+    }
+    .model-badge-detail { font-weight: 400; opacity: .75; margin-left: .3rem; }
+    .model-badge-error { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# --------------------------------------------------------------- helpers --
 
 
-def _save_upload_to_temp(uploaded_file) -> str:
-    """parse_resume() takes a file path, not bytes -- save the upload to a
-    temp file so we can call it unmodified."""
-    suffix = os.path.splitext(uploaded_file.name)[1] or ".pdf"
+def _save_bytes_to_temp(name: str, data: bytes) -> str:
+    """parse_resume() takes a file path, not bytes -- save to a temp file
+    so we can call it unmodified."""
+    suffix = os.path.splitext(name)[1] or ".pdf"
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    tmp.write(uploaded_file.getvalue())
+    tmp.write(data)
     tmp.close()
     return tmp.name
 
 
+def sync_single_upload(widget_value, results: dict, results_key: str) -> None:
+    """st.file_uploader's return value is lost across reruns where the
+    widget itself isn't rendered (e.g. while the other mode is active) --
+    even with a stable `key`. Persist the raw bytes into our own results
+    dict the moment a file arrives, so uploads survive mode switches."""
+    if widget_value is not None:
+        results[results_key] = {"name": widget_value.name, "bytes": widget_value.getvalue()}
+
+
+def sync_multi_upload(widget_value, results: dict, results_key: str) -> None:
+    if widget_value:
+        results[results_key] = [{"name": f.name, "bytes": f.getvalue()} for f in widget_value]
+
+
+def _score_class(score: float) -> str:
+    if score >= 80:
+        return "score-good"
+    if score >= 50:
+        return "score-mid"
+    return "score-low"
+
+
+def render_score_card(label: str, score: float) -> None:
+    st.markdown(
+        f"""
+        <div class="score-card {_score_class(score)}">
+          <div class="score-label">{html.escape(label)}</div>
+          <div class="score-value">{score:.1f}%</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.progress(min(max(score / 100, 0.0), 1.0))
+
+
+def render_stat_card(label: str, value: str, pill: str | None = None) -> None:
+    cls = f"pill-{pill}" if pill else ""
+    st.markdown(
+        f"""
+        <div class="stat-card">
+          <div class="stat-label">{html.escape(label)}</div>
+          <div class="stat-value {cls}">{html.escape(str(value))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_model_badge() -> None:
+    """Shows which Gemini model/key the rewrite loop would currently use --
+    reflects key rotation and model fallback state (src/rewriter.py)."""
+    try:
+        status = get_active_model_status()
+    except RuntimeError as exc:
+        st.markdown(
+            f'<div class="model-badge model-badge-error">⚠️ {html.escape(str(exc))}</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    detail = f"key {status['active_key_index']}/{status['total_keys']}"
+    if status["exhausted_pairs"]:
+        detail += f" · {status['exhausted_pairs']}/{status['total_pairs']} quota slots used today"
+    st.markdown(
+        f'<div class="model-badge">⚡ Active Model: {html.escape(status["active_model"])}'
+        f'<span class="model-badge-detail">({html.escape(detail)})</span></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_badges(keywords: list[str], kind: str) -> None:
+    if not keywords:
+        st.caption("(none)")
+        return
+    cls = "badge-matched" if kind == "matched" else "badge-missing"
+    st.markdown(
+        "".join(f'<span class="badge {cls}">{html.escape(k)}</span>' for k in keywords),
+        unsafe_allow_html=True,
+    )
+
+
+def render_line_diff(before: str, after: str) -> None:
+    """Line-level diff, purely for display -- computed from the already-
+    generated before/after text, not part of the pipeline."""
+    before_lines, after_lines = before.splitlines(), after.splitlines()
+    matcher = difflib.SequenceMatcher(None, before_lines, after_lines)
+    parts = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            for line in before_lines[i1:i2]:
+                parts.append(f'<div class="diff-line diff-eq">{html.escape(line)}</div>')
+        else:
+            for line in before_lines[i1:i2]:
+                parts.append(f'<div class="diff-line diff-del">- {html.escape(line)}</div>')
+            for line in after_lines[j1:j2]:
+                parts.append(f'<div class="diff-line diff-add">+ {html.escape(line)}</div>')
+    st.markdown(f'<div class="diff-box">{"".join(parts)}</div>', unsafe_allow_html=True)
+
+
+# ------------------------------------------------------------------ hero --
+
+st.markdown(
+    """
+    <div class="app-hero">
+      <h1>🎯 Resume Tailor -- AI ATS Optimizer</h1>
+      <p>Upload a resume and a job description to see a deterministic ATS-style match score,
+      then let an AI rewrite loop tailor the resume toward your target score -- with a
+      truthfulness check that blocks any rewrite introducing skills you don't actually have.
+      Switch to <b>Employer</b> mode to rank several candidates against one job description.</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+render_model_badge()
+
+mode = st.segmented_control("Mode", ["Candidate", "Employer"], default="Candidate", key="active_mode") or "Candidate"
+
+# Single source of truth for computed results, namespaced by mode so a
+# mode switch (or Streamlit rerun) never loses Phase 2/3 output. Input
+# widgets below are bound via stable `key=` params for the same reason --
+# without a key, a widget's value resets whenever it isn't rendered on a
+# given run (e.g. while the other mode is active).
+if "analysis_results" not in st.session_state:
+    st.session_state["analysis_results"] = {"candidate": {}, "employer": {}}
+candidate_results = st.session_state["analysis_results"]["candidate"]
+employer_results = st.session_state["analysis_results"]["employer"]
+
+# ------------------------------------------------------------- candidate --
+
 if mode == "Candidate":
-    st.header("Candidate mode")
+    st.markdown('<div class="section-label">1. Upload &amp; target</div>', unsafe_allow_html=True)
 
-    resume_file = st.file_uploader("Resume (PDF)", type=["pdf"])
-    jd_text = st.text_area("Job description", height=150)
+    upl_col, jd_col = st.columns([1, 1.4])
+    with upl_col:
+        resume_file = st.file_uploader("Resume (PDF)", type=["pdf"], key="candidate_pdf")
+        sync_single_upload(resume_file, candidate_results, "uploaded_pdf")
+        has_resume = "uploaded_pdf" in candidate_results
+        if resume_file is None and has_resume:
+            st.caption(f"📎 Using previously uploaded **{candidate_results['uploaded_pdf']['name']}** -- upload a new file to replace it.")
+        c1, c2 = st.columns(2)
+        with c1:
+            target_score = st.number_input(
+                "Target score", value=DEFAULT_TARGET_SCORE, min_value=0.0, max_value=100.0,
+                key="candidate_target_score",
+            )
+        with c2:
+            max_iterations = st.number_input(
+                "Max iterations", value=DEFAULT_MAX_ITERATIONS, min_value=1, step=1,
+                key="candidate_max_iterations",
+            )
+    with jd_col:
+        jd_text = st.text_area("Job description", height=190, key="shared_jd")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        target_score = st.number_input(
-            "Target score", value=DEFAULT_TARGET_SCORE, min_value=0.0, max_value=100.0
-        )
-    with col2:
-        max_iterations = st.number_input(
-            "Max iterations", value=DEFAULT_MAX_ITERATIONS, min_value=1, step=1
-        )
-
-    if st.button("Analyze", disabled=not (resume_file and jd_text)):
+    if st.button("🔍  Analyze", type="primary", disabled=not (has_resume and jd_text)):
         try:
-            resume_path = _save_upload_to_temp(resume_file)
+            upload = candidate_results["uploaded_pdf"]
+            resume_path = _save_bytes_to_temp(upload["name"], upload["bytes"])
             resume_text = parse_resume(resume_path)
-            st.session_state["resume_text"] = resume_text
-            st.session_state["jd_text"] = jd_text
-            st.session_state["score_result"] = score_resume(resume_text, jd_text)
-            st.session_state.pop("loop_result", None)  # stale after re-analyze
+            candidate_results["resume_text"] = resume_text
+            candidate_results["jd_text"] = jd_text
+            candidate_results["score_result"] = score_resume(resume_text, jd_text)
+            candidate_results.pop("loop_result", None)  # stale after re-analyze
         except (ParseError, ValueError) as exc:
             st.error(f"Parsing failed: {exc}")
 
-    if "resume_text" in st.session_state:
-        st.subheader("Phase 1 -- parsed resume text")
-        st.text_area("Extracted text", st.session_state["resume_text"], height=250)
+    if "resume_text" in candidate_results:
+        st.markdown('<div class="section-label">2. Parsed resume (Phase 1)</div>', unsafe_allow_html=True)
+        st.text_area("Extracted text", candidate_results["resume_text"], height=220, label_visibility="collapsed")
 
-        st.subheader("Phase 2 -- score")
-        result = st.session_state["score_result"]
-        st.metric("Score", f"{result.score}%")
-        gcol1, gcol2 = st.columns(2)
-        with gcol1:
-            st.write("**Matched keywords**")
-            st.write(result.matched_keywords or "(none)")
-        with gcol2:
-            st.write("**Missing keywords**")
-            st.write(result.missing_keywords or "(none)")
+        st.markdown('<div class="section-label">3. Match score (Phase 2)</div>', unsafe_allow_html=True)
+        result = candidate_results["score_result"]
+        score_col, kw_col = st.columns([1, 2])
+        with score_col:
+            render_score_card("ATS match score", result.score)
+            st.caption(f"= 50% semantic ({result.semantic_score:.1f}%) + 50% keyword ({result.keyword_score:.1f}%)")
+        with kw_col:
+            mcol, xcol = st.columns(2)
+            with mcol:
+                st.markdown("**✅ Matched keywords**")
+                render_badges(result.matched_keywords, "matched")
+            with xcol:
+                st.markdown("**⚠️ Missing keywords**")
+                render_badges(result.missing_keywords, "missing")
+            if result.conceptual_gaps:
+                st.markdown("**🧠 Conceptual skill gaps** (not present anywhere, even under different wording)")
+                render_badges(result.conceptual_gaps, "missing")
 
-        st.subheader("Phase 3 -- rewrite + truthfulness loop")
-        if st.button("Rewrite"):
+        st.markdown('<div class="section-label">4. Rewrite + truthfulness loop (Phase 3)</div>', unsafe_allow_html=True)
+        if st.button("✍️  Rewrite", type="primary"):
             try:
                 with st.spinner("Running generator -> truthfulness check -> judge loop..."):
-                    st.session_state["loop_result"] = run_rewrite_loop(
-                        st.session_state["resume_text"],
-                        st.session_state["jd_text"],
+                    candidate_results["loop_result"] = run_rewrite_loop(
+                        candidate_results["resume_text"],
+                        candidate_results["jd_text"],
                         target_score=target_score,
                         max_iterations=int(max_iterations),
                     )
@@ -99,103 +367,146 @@ if mode == "Candidate":
             except genai_errors.ServerError as exc:
                 st.error(f"Gemini API unavailable after retries (not a pipeline bug): {exc}")
 
-        if "loop_result" in st.session_state:
-            loop_result = st.session_state["loop_result"]
+        if "loop_result" in candidate_results:
+            loop_result = candidate_results["loop_result"]
 
-            st.write("**Per-iteration log**")
+            st.markdown("**Per-iteration log**")
             for log in loop_result.history:
                 if log.iteration == 0:
-                    st.markdown(f"- Iteration 0 (initial parse) -- score: {log.score}")
+                    st.markdown(f"🏁 &nbsp;**Iteration 0** (initial parse) -- score **{log.score:.1f}%**", unsafe_allow_html=True)
                     continue
 
-                status = "PASSED" if log.accepted else f"REJECTED ({log.rejection_reason})"
-                with st.expander(f"Iteration {log.iteration} -- score: {log.score} -- {status}"):
+                status_label = "✅ Passed" if log.accepted else "❌ Rejected"
+                with st.expander(f"Iteration {log.iteration} · score {log.score:.1f}% · {status_label}"):
                     if log.accepted and log.changed_sections:
                         for section, (before, after) in log.changed_sections.items():
                             st.markdown(f"**Section: {section}**")
-                            bcol, acol = st.columns(2)
-                            with bcol:
-                                st.text_area(
-                                    "before", before, height=150,
-                                    key=f"before-{log.iteration}-{section}",
-                                )
-                            with acol:
-                                st.text_area(
-                                    "after", after, height=150,
-                                    key=f"after-{log.iteration}-{section}",
-                                )
+                            render_line_diff(before, after)
                     elif log.accepted:
-                        st.caption(
-                            "Accepted, but the section splitter found no per-section diff."
-                        )
+                        st.caption("Accepted, but the section splitter found no per-section diff.")
                     else:
-                        st.caption(
-                            "This draft was rejected by the truthfulness check and "
-                            "discarded -- it was never scored."
+                        st.error(
+                            f"Rejected -- {log.rejection_reason}. This draft was discarded and never scored."
                         )
 
-            st.subheader("Final result")
-            fcol1, fcol2, fcol3 = st.columns(3)
-            fcol1.metric("Final score", f"{loop_result.best_score}%")
-            fcol2.metric("Iterations run", loop_result.iterations_run)
-            fcol3.metric("Hit target", "Yes" if loop_result.hit_target else "No")
+            st.markdown('<div class="section-label">5. Final result</div>', unsafe_allow_html=True)
+            f1, f2, f3 = st.columns(3)
+            with f1:
+                render_score_card("Final score", loop_result.best_score)
+            with f2:
+                render_stat_card("Iterations run", loop_result.iterations_run)
+            with f3:
+                render_stat_card("Hit target", "Yes" if loop_result.hit_target else "No",
+                                  pill="yes" if loop_result.hit_target else "no")
 
             accepted_scores = {log.iteration: log.score for log in loop_result.history if log.accepted}
             best_iteration = max(accepted_scores, key=accepted_scores.get) if accepted_scores else 0
             if best_iteration != loop_result.iterations_run:
-                st.info(
-                    f"Best score ({loop_result.best_score}%) came from iteration "
-                    f"{best_iteration}, not the last iteration run ({loop_result.iterations_run}). "
-                    "The text below is that best-scoring version -- confirming the loop kept "
-                    "it rather than defaulting to the final draft."
+                st.markdown(
+                    f'<div class="info-banner">Best score ({loop_result.best_score:.1f}%) came from '
+                    f'iteration {best_iteration}, not the last iteration run ({loop_result.iterations_run}). '
+                    "The text below is that best-scoring version -- confirming the loop kept it rather "
+                    "than defaulting to the final draft.</div>",
+                    unsafe_allow_html=True,
                 )
             else:
-                st.info(
-                    f"Best score ({loop_result.best_score}%) is from iteration {best_iteration}, "
-                    "which is also the last iteration run."
+                st.markdown(
+                    f'<div class="info-banner">Best score ({loop_result.best_score:.1f}%) is from '
+                    f"iteration {best_iteration}, which is also the last iteration run.</div>",
+                    unsafe_allow_html=True,
                 )
 
-            st.subheader("Best-scoring resume text")
-            st.text_area("Final resume", loop_result.best_resume_text, height=300)
+            st.markdown("**Best-scoring resume text**")
+            st.text_area("Final resume", loop_result.best_resume_text, height=280, label_visibility="collapsed")
 
-else:  # Employer
-    st.header("Employer mode")
+            try:
+                pdf_bytes = generate_resume_pdf(loop_result.best_resume_text)
+                st.download_button(
+                    "⬇️  Download tailored resume (PDF)",
+                    data=pdf_bytes,
+                    file_name="tailored_resume.pdf",
+                    mime="application/pdf",
+                    type="primary",
+                )
+            except Exception as exc:
+                st.error(f"Could not generate the PDF (not a scoring/rewrite bug): {exc}")
 
-    resume_files = st.file_uploader("Resumes (PDF)", type=["pdf"], accept_multiple_files=True)
-    jd_text = st.text_area("Job description", height=150)
+# --------------------------------------------------------------- employer --
 
-    if st.button("Rank", disabled=not (resume_files and jd_text)):
+else:
+    st.markdown('<div class="section-label">1. Upload candidates &amp; job description</div>', unsafe_allow_html=True)
+
+    upl_col, jd_col = st.columns([1, 1.4])
+    with upl_col:
+        resume_files = st.file_uploader(
+            "Resumes (PDF)", type=["pdf"], accept_multiple_files=True, key="employer_pdfs"
+        )
+        sync_multi_upload(resume_files, employer_results, "uploaded_pdfs")
+        has_resumes = bool(employer_results.get("uploaded_pdfs"))
+        if not resume_files and has_resumes:
+            names = ", ".join(u["name"] for u in employer_results["uploaded_pdfs"])
+            st.caption(f"📎 Using previously uploaded: **{names}** -- upload new files to replace them.")
+    with jd_col:
+        jd_text = st.text_area("Job description", height=150, key="shared_jd")
+
+    if st.button("📊  Rank", type="primary", disabled=not (has_resumes and jd_text)):
         resume_paths = []
         name_by_path = {}
-        for f in resume_files:
-            path = _save_upload_to_temp(f)
+        for upload in employer_results["uploaded_pdfs"]:
+            path = _save_bytes_to_temp(upload["name"], upload["bytes"])
             resume_paths.append(path)
-            name_by_path[path] = f.name
+            name_by_path[path] = upload["name"]
 
-        st.session_state["rankings"] = employer_mode(resume_paths, jd_text)
-        st.session_state["name_by_path"] = name_by_path
+        employer_results["rankings"] = employer_mode(resume_paths, jd_text)
+        employer_results["name_by_path"] = name_by_path
 
-    if "rankings" in st.session_state:
-        rankings = st.session_state["rankings"]
-        name_by_path = st.session_state["name_by_path"]
+    if "rankings" in employer_results:
+        rankings = employer_results["rankings"]
+        name_by_path = employer_results["name_by_path"]
 
-        st.subheader("Ranked candidates")
-        st.table([
-            {
-                "Rank": i,
-                "File": name_by_path.get(r.resume_path, r.resume_path),
-                "Score": r.score,
-                "Error": r.error or "",
-            }
-            for i, r in enumerate(rankings, start=1)
-        ])
+        st.markdown('<div class="section-label">2. Ranked candidates</div>', unsafe_allow_html=True)
+        st.dataframe(
+            [
+                {
+                    "Rank": i,
+                    "Candidate": name_by_path.get(r.resume_path, r.resume_path),
+                    "Score": r.score,
+                    "Status": "⚠️ Parse error" if r.error else "✅ OK",
+                }
+                for i, r in enumerate(rankings, start=1)
+            ],
+            column_config={
+                "Rank": st.column_config.NumberColumn("Rank", width="small"),
+                "Score": st.column_config.ProgressColumn(
+                    "Score", min_value=0, max_value=100, format="%.1f%%"
+                ),
+            },
+            hide_index=True,
+            use_container_width=True,
+        )
 
-        st.subheader("Gap summaries")
+        st.markdown('<div class="section-label">3. Gap summaries</div>', unsafe_allow_html=True)
         for r in rankings:
             label = name_by_path.get(r.resume_path, r.resume_path)
-            with st.expander(f"{label} -- score {r.score}"):
+            status = "⚠️" if r.error else "✅"
+            with st.expander(f"{status} {label} -- score {r.score:.1f}%"):
                 if r.error:
                     st.error(r.error)
                     continue
-                st.write("**Matched:**", ", ".join(r.matched_keywords) or "(none)")
-                st.write("**Missing:**", ", ".join(r.missing_keywords) or "(none)")
+                st.caption(f"= 50% semantic ({r.semantic_score:.1f}%) + 50% keyword ({r.keyword_score:.1f}%)")
+                mcol, xcol = st.columns(2)
+                with mcol:
+                    st.markdown("**✅ Matched**")
+                    render_badges(r.matched_keywords, "matched")
+                with xcol:
+                    st.markdown("**⚠️ Missing**")
+                    render_badges(r.missing_keywords, "missing")
+                if r.conceptual_gaps:
+                    st.markdown("**🧠 Conceptual skill gaps**")
+                    render_badges(r.conceptual_gaps, "missing")
+
+st.markdown(
+    '<div class="footnote">Thin debugging/demo surface over src/parser.py, src/scorer.py, '
+    "src/agent_loop.py and src/modes.py -- no pipeline logic lives in this file.</div>",
+    unsafe_allow_html=True,
+)

@@ -1,14 +1,19 @@
-"""Local, deterministic resume-vs-JD scoring: keyword coverage via spaCy
-noun-chunk/entity extraction. No LLM call -- fast and reproducible."""
+"""Hybrid resume-vs-JD scoring: 50% semantic embedding similarity
+(sentence-transformers) + 50% deterministic keyword coverage (spaCy
+noun-chunk/entity extraction). No LLM call -- both halves are local
+models, fast and reproducible (semantic similarity is not literally
+deterministic-by-definition the way substring matching is, but the same
+model + same inputs always produce the same score)."""
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import spacy
 
 _NLP = None
+_EMBEDDER = None
 
 
 def _get_nlp():
@@ -16,6 +21,14 @@ def _get_nlp():
     if _NLP is None:
         _NLP = spacy.load("en_core_web_sm")
     return _NLP
+
+
+def _get_embedder():
+    global _EMBEDDER
+    if _EMBEDDER is None:
+        from sentence_transformers import SentenceTransformer
+        _EMBEDDER = SentenceTransformer("all-MiniLM-L6-v2")
+    return _EMBEDDER
 
 
 # Generic head nouns whose modifiers ARE worth salvaging (e.g. "Kubernetes
@@ -62,23 +75,43 @@ MIN_KEYWORD_LEN = 2
 # cap word count so that parsing artifact never becomes a "keyword".
 MAX_KEYWORD_WORDS = 5
 
+# Weights for the hybrid score.
+SEMANTIC_WEIGHT = 0.5
+KEYWORD_WEIGHT = 0.5
+
+# Raw MiniLM cosine similarities for genuinely related professional text
+# cluster in a fairly narrow band (rarely near 0 or 1 even for a great
+# match) -- rescale that observed band to the full 0-100 range instead of
+# using raw cosine directly, which would compress every score into the
+# low-to-mid range regardless of how good the match actually is.
+SEMANTIC_SIM_FLOOR = 0.15   # ~unrelated text
+SEMANTIC_SIM_CEIL = 0.75    # ~strongly related text
+
+# A missing keyword whose embedding is still this similar to the resume's
+# best-matching line is probably present under different wording, not a
+# real gap.
+CONCEPTUAL_MATCH_THRESHOLD = 0.45
+
 
 @dataclass
 class ScoreResult:
-    score: float  # 0-100, percent of JD keywords found in the resume
+    score: float  # 0-100, combined hybrid score
+    keyword_score: float  # 0-100, exact/partial keyword coverage
+    semantic_score: float  # 0-100, embedding cosine similarity (rescaled)
     matched_keywords: list[str]
-    missing_keywords: list[str]
+    missing_keywords: list[str]  # exact lexical misses (includes conceptual_gaps)
+    conceptual_gaps: list[str] = field(default_factory=list)  # subset of missing_keywords that also fail the semantic check -- likely genuine gaps, not just different phrasing
 
     @property
     def total_keywords(self) -> int:
         return len(self.matched_keywords) + len(self.missing_keywords)
 
 
-def _clean_term(span) -> str | None:
-    """Turn a noun chunk / entity span into a keyword string, or None if
-    it's boilerplate. Uses raw token text (not spaCy lemmas) so unfamiliar
-    technical proper nouns like "Kubernetes" aren't mangled by the small
-    model's lemmatizer (which otherwise reduces it to "kubernete")."""
+def _clean_term(span) -> list[str]:
+    """Turn a noun chunk / entity span into zero or more keyword strings.
+    Uses raw token text (not spaCy lemmas) so unfamiliar technical proper
+    nouns like "Kubernetes" aren't mangled by the small model's
+    lemmatizer (which otherwise reduces it to "kubernete")."""
     root = span.root
     root_text = root.text.lower()
 
@@ -88,29 +121,49 @@ def _clean_term(span) -> str | None:
             if t.is_alpha and not t.is_stop and t.text.lower() not in _GENERIC_ADJECTIVES
         ]
         if not tokens or len(tokens) > MAX_KEYWORD_WORDS:
-            return None
+            return []
         term = " ".join(t.text.lower() for t in tokens)
-        return term if len(term) >= MIN_KEYWORD_LEN else None
+        return [term] if len(term) >= MIN_KEYWORD_LEN else []
 
     if root_text not in _SKILL_CONTEXT_HEAD_NOUNS:
         # Title/role or pure-filler head (e.g. "Software Developer Intern",
         # "a bonus") -- drop the whole chunk, no modifier salvage.
-        return None
+        return []
 
     # Root is a skill-context head noun (e.g. "Kubernetes experience") --
     # salvage the compound/proper-noun modifiers, usually the real skill.
-    modifiers = [
-        t for t in span
-        if t.i != root.i and t.is_alpha and not t.is_stop
-        and t.text.lower() not in _GENERIC_ADJECTIVES
-        and (t.dep_ == "compound" or t.pos_ == "PROPN")
-    ]
-    if not modifiers or len(modifiers) > MAX_KEYWORD_WORDS:
-        return None
-    term = " ".join(t.text.lower() for t in modifiers)
-    if len(term) < MIN_KEYWORD_LEN or term in _GENERIC_HEAD_NOUNS:
-        return None
-    return term
+    modifiers = sorted(
+        (
+            t for t in span
+            if t.i != root.i and t.is_alpha and not t.is_stop
+            and t.text.lower() not in _GENERIC_ADJECTIVES
+            and (t.dep_ == "compound" or t.pos_ == "PROPN")
+        ),
+        key=lambda t: t.i,
+    )
+    if not modifiers:
+        return []
+
+    # Group into contiguous runs so a conjunction like "Flask and Docker
+    # experience" yields two separate keywords ("flask", "docker") instead
+    # of one unmatchable glued phrase ("flask docker") -- "and" isn't a
+    # modifier itself (filtered above as a stopword), so it splits the
+    # token-index run.
+    runs: list[list] = []
+    for t in modifiers:
+        if runs and t.i == runs[-1][-1].i + 1:
+            runs[-1].append(t)
+        else:
+            runs.append([t])
+
+    terms = []
+    for run in runs:
+        if len(run) > MAX_KEYWORD_WORDS:
+            continue
+        term = " ".join(tok.text.lower() for tok in run)
+        if len(term) >= MIN_KEYWORD_LEN and term not in _GENERIC_HEAD_NOUNS:
+            terms.append(term)
+    return terms
 
 
 def extract_keywords(text: str) -> list[str]:
@@ -120,16 +173,12 @@ def extract_keywords(text: str) -> list[str]:
     keywords: set[str] = set()
 
     for chunk in doc.noun_chunks:
-        term = _clean_term(chunk)
-        if term:
-            keywords.add(term)
+        keywords.update(_clean_term(chunk))
 
     for ent in doc.ents:
         if ent.label_ in {"ORG", "GPE", "PERSON", "DATE", "CARDINAL"}:
             continue  # not skill-relevant
-        term = _clean_term(ent)
-        if term:
-            keywords.add(term)
+        keywords.update(_clean_term(ent))
 
     return sorted(keywords)
 
@@ -152,19 +201,100 @@ def _fold(text: str) -> str:
     return " ".join(words)
 
 
-def score_resume(resume_text: str, jd_text: str) -> ScoreResult:
-    """Score a resume against a job description via deterministic keyword
-    coverage: percent of JD keywords found (via folded substring match) in
-    the resume text."""
+def _keyword_coverage(resume_text: str, jd_text: str) -> tuple[float, list[str], list[str]]:
+    """Percent of JD keywords found (via folded substring match) in the
+    resume text. Returns (score, matched, missing)."""
     jd_keywords = extract_keywords(jd_text)
     if not jd_keywords:
-        return ScoreResult(score=0.0, matched_keywords=[], missing_keywords=[])
+        return 0.0, [], []
 
     resume_folded = _fold(resume_text)
-
     matched, missing = [], []
     for kw in jd_keywords:
         (matched if _fold(kw) in resume_folded else missing).append(kw)
 
     score = round(100 * len(matched) / len(jd_keywords), 2)
-    return ScoreResult(score=score, matched_keywords=matched, missing_keywords=missing)
+    return score, matched, missing
+
+
+def _cosine_similarity(a, b) -> float:
+    import numpy as np
+    a, b = np.asarray(a), np.asarray(b)
+    denom = np.linalg.norm(a) * np.linalg.norm(b)
+    return float(np.dot(a, b) / denom) if denom else 0.0
+
+
+def _resume_lines(resume_text: str) -> list[str]:
+    return [line.strip() for line in resume_text.splitlines() if line.strip()]
+
+
+def _jd_sentences(jd_text: str) -> list[str]:
+    doc = _get_nlp()(jd_text)
+    return [s.text.strip() for s in doc.sents if s.text.strip()]
+
+
+def _semantic_score(resume_text: str, jd_text: str) -> float:
+    """For each JD sentence, find its best-matching resume line (cosine
+    similarity), then average across JD sentences. This max-pooling
+    alignment -- not one whole-document-vs-whole-document embedding --
+    matters because a resume has plenty of content (contact info, dates,
+    education tables) that has nothing to do with the JD; averaging that
+    in dilutes a perfectly good match down to a mediocre score."""
+    resume_lines = _resume_lines(resume_text)
+    jd_sentences = _jd_sentences(jd_text)
+    if not resume_lines or not jd_sentences:
+        return 0.0
+
+    embedder = _get_embedder()
+    resume_vecs = embedder.encode(resume_lines)
+    jd_vecs = embedder.encode(jd_sentences)
+
+    best_sims = [
+        max(_cosine_similarity(jd_vec, r_vec) for r_vec in resume_vecs)
+        for jd_vec in jd_vecs
+    ]
+    raw = sum(best_sims) / len(best_sims)
+    rescaled = (raw - SEMANTIC_SIM_FLOOR) / (SEMANTIC_SIM_CEIL - SEMANTIC_SIM_FLOOR)
+    return round(100 * max(0.0, min(1.0, rescaled)), 2)
+
+
+def _find_conceptual_gaps(missing_keywords: list[str], resume_text: str) -> list[str]:
+    """Of the exact-match misses, find the ones that are ALSO not
+    semantically present anywhere in the resume -- i.e. likely genuine
+    skill gaps rather than the same skill phrased differently."""
+    if not missing_keywords:
+        return []
+
+    resume_lines = _resume_lines(resume_text)
+    if not resume_lines:
+        return list(missing_keywords)
+
+    embedder = _get_embedder()
+    line_vecs = embedder.encode(resume_lines)
+    keyword_vecs = embedder.encode(missing_keywords)
+
+    gaps = []
+    for keyword, kw_vec in zip(missing_keywords, keyword_vecs):
+        best_sim = max(_cosine_similarity(kw_vec, line_vec) for line_vec in line_vecs)
+        if best_sim < CONCEPTUAL_MATCH_THRESHOLD:
+            gaps.append(keyword)
+    return gaps
+
+
+def score_resume(resume_text: str, jd_text: str) -> ScoreResult:
+    """Hybrid ATS score: 50% semantic (embedding cosine similarity between
+    the whole resume and JD) + 50% keyword coverage (exact/partial match
+    of extracted JD skill keywords against the resume text)."""
+    keyword_score, matched, missing = _keyword_coverage(resume_text, jd_text)
+    semantic_score = _semantic_score(resume_text, jd_text)
+    combined = round(SEMANTIC_WEIGHT * semantic_score + KEYWORD_WEIGHT * keyword_score, 2)
+    conceptual_gaps = _find_conceptual_gaps(missing, resume_text)
+
+    return ScoreResult(
+        score=combined,
+        keyword_score=keyword_score,
+        semantic_score=semantic_score,
+        matched_keywords=matched,
+        missing_keywords=missing,
+        conceptual_gaps=conceptual_gaps,
+    )

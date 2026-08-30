@@ -34,7 +34,10 @@ class Patcher:
 
 
 def _fake_score(value):
-    return ScoreResult(score=value, matched_keywords=[], missing_keywords=["m"] if value < 100 else [])
+    return ScoreResult(
+        score=value, keyword_score=value, semantic_score=value,
+        matched_keywords=[], missing_keywords=["m"] if value < 100 else [],
+    )
 
 
 def _draft_generator(texts):

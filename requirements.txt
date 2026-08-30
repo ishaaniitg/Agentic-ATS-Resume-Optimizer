@@ -2,7 +2,10 @@ pymupdf
 pdf2image
 pytesseract
 spacy
+sentence-transformers
 google-genai
+tenacity
 python-dotenv
 streamlit
+reportlab
 # after installing, also run: python -m spacy download en_core_web_sm
