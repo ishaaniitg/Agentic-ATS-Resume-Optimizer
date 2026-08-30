@@ -35,121 +35,12 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------- styling --
+# All color/spacing/radius tokens and component classes live in
+# assets/theme.css -- this is the single place to change the look.
 
-st.markdown(
-    """
-    <style>
-    :root {
-      --accent: #4f46e5;
-      --accent-light: #eef2ff;
-      --success: #16a34a;
-      --success-bg: #dcfce7;
-      --danger: #dc2626;
-      --danger-bg: #fee2e2;
-      --warn: #d97706;
-      --warn-bg: #fef3c7;
-      --border: #e2e8f0;
-      --text-muted: #64748b;
-    }
-
-    .app-hero {
-      background: linear-gradient(135deg, var(--accent) 0%, #7c3aed 100%);
-      color: white;
-      padding: 1.75rem 2rem;
-      border-radius: 14px;
-      margin-bottom: 1.25rem;
-    }
-    .app-hero h1 { margin: 0 0 .4rem 0; font-size: 1.6rem; }
-    .app-hero p { margin: 0; opacity: .92; font-size: .95rem; line-height: 1.55; max-width: 760px; }
-
-    .section-label {
-      font-size: .76rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: .06em;
-      color: var(--text-muted);
-      margin: 1.5rem 0 .5rem 0;
-    }
-
-    .score-card {
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 1rem 1.25rem .5rem 1.25rem;
-      background: white;
-    }
-    .score-card .score-label { color: var(--text-muted); font-size: .8rem; margin-bottom: .15rem; }
-    .score-card .score-value { font-size: 2.2rem; font-weight: 800; line-height: 1.1; }
-    .score-good .score-value { color: var(--success); }
-    .score-mid .score-value { color: var(--warn); }
-    .score-low .score-value { color: var(--danger); }
-
-    .stat-card {
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: .9rem 1.1rem;
-      background: white;
-      text-align: center;
-    }
-    .stat-card .stat-label { color: var(--text-muted); font-size: .78rem; margin-bottom: .2rem; }
-    .stat-card .stat-value { font-size: 1.5rem; font-weight: 800; }
-    .pill-yes { color: var(--success); }
-    .pill-no { color: var(--danger); }
-
-    .badge {
-      display: inline-block;
-      padding: .2rem .7rem;
-      border-radius: 999px;
-      font-size: .8rem;
-      font-weight: 600;
-      margin: .15rem .3rem .15rem 0;
-    }
-    .badge-matched { background: var(--success-bg); color: var(--success); }
-    .badge-missing { background: var(--danger-bg); color: var(--danger); }
-
-    .info-banner {
-      border: 1px solid var(--accent);
-      background: var(--accent-light);
-      color: #3730a3;
-      border-radius: 10px;
-      padding: .8rem 1.1rem;
-      font-size: .88rem;
-      margin: .6rem 0 1rem 0;
-    }
-
-    .diff-box {
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: #fafafa;
-      padding: .6rem .8rem;
-      font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
-      font-size: .8rem;
-      max-height: 320px;
-      overflow-y: auto;
-    }
-    .diff-line { padding: .05rem .35rem; border-radius: 3px; white-space: pre-wrap; margin: .05rem 0; }
-    .diff-add { background: var(--success-bg); color: #166534; }
-    .diff-del { background: var(--danger-bg); color: #991b1b; }
-    .diff-eq { color: #475569; }
-
-    .footnote { color: var(--text-muted); font-size: .78rem; margin-top: 2rem; }
-
-    .model-badge {
-      display: inline-block;
-      background: var(--accent-light);
-      color: #3730a3;
-      border: 1px solid var(--accent);
-      border-radius: 999px;
-      padding: .35rem .9rem;
-      font-size: .82rem;
-      font-weight: 600;
-      margin-bottom: 1.25rem;
-    }
-    .model-badge-detail { font-weight: 400; opacity: .75; margin-left: .3rem; }
-    .model-badge-error { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+_THEME_CSS_PATH = os.path.join(os.path.dirname(__file__), "assets", "theme.css")
+with open(_THEME_CSS_PATH, encoding="utf-8") as f:
+    st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 # --------------------------------------------------------------- helpers --
 

@@ -1,0 +1,166 @@
+/* Design system for Resume Tailor -- single source of truth for color,
+   type, spacing, radius and shadow tokens used across app.py. */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+:root {
+  /* color */
+  --color-primary: #4f46e5;
+  --color-primary-dark: #4338ca;
+  --color-secondary: #7c3aed;
+  --color-bg: #f8fafc;
+  --color-surface: #ffffff;
+  --color-border: #e2e8f0;
+  --color-success: #16a34a;
+  --color-success-bg: #dcfce7;
+  --color-danger: #dc2626;
+  --color-danger-bg: #fee2e2;
+  --color-warning: #d97706;
+  --color-warning-bg: #fef3c7;
+  --color-text: #1e293b;
+  --color-text-muted: #64748b;
+  --color-primary-bg: #eef2ff;
+
+  /* radius */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  /* shadow */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, .06);
+  --shadow-md: 0 4px 12px rgba(15, 23, 42, .08);
+  --shadow-lg: 0 8px 24px rgba(15, 23, 42, .10);
+
+  /* spacing scale */
+  --space-xs: .25rem;
+  --space-sm: .5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+}
+
+/* ---------------------------------------------------------- global type -- */
+
+html, body, [class*="css"], .stApp {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* ------------------------------------------------ hide streamlit chrome -- */
+/* Removes the hamburger menu and "Made with Streamlit" footer, keeps the
+   sidebar toggle and the rest of the native header functional. */
+
+#MainMenu { visibility: hidden; }
+footer { visibility: hidden; }
+
+/* ------------------------------------------------------------- hero -- */
+
+.app-hero {
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+  color: white;
+  padding: var(--space-lg) var(--space-xl);
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-md);
+  box-shadow: var(--shadow-md);
+}
+.app-hero h1 { margin: 0 0 .4rem 0; font-size: 1.6rem; font-weight: 800; }
+.app-hero p { margin: 0; opacity: .92; font-size: .95rem; line-height: 1.55; max-width: 760px; }
+
+/* --------------------------------------------------------- sections -- */
+
+.section-label {
+  font-size: .76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--color-text-muted);
+  margin: var(--space-lg) 0 var(--space-sm) 0;
+}
+
+/* ------------------------------------------------------------ cards -- */
+
+.score-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-md) var(--space-lg) var(--space-sm) var(--space-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+.score-card .score-label { color: var(--color-text-muted); font-size: .8rem; margin-bottom: .15rem; }
+.score-card .score-value { font-size: 2.2rem; font-weight: 800; line-height: 1.1; }
+.score-good .score-value { color: var(--color-success); }
+.score-mid .score-value { color: var(--color-warning); }
+.score-low .score-value { color: var(--color-danger); }
+
+.stat-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-surface);
+  text-align: center;
+  box-shadow: var(--shadow-sm);
+}
+.stat-card .stat-label { color: var(--color-text-muted); font-size: .78rem; margin-bottom: .2rem; }
+.stat-card .stat-value { font-size: 1.5rem; font-weight: 800; }
+.pill-yes { color: var(--color-success); }
+.pill-no { color: var(--color-danger); }
+
+/* ----------------------------------------------------------- badges -- */
+
+.badge {
+  display: inline-block;
+  padding: .2rem .7rem;
+  border-radius: var(--radius-pill);
+  font-size: .8rem;
+  font-weight: 600;
+  margin: .15rem .3rem .15rem 0;
+}
+.badge-matched { background: var(--color-success-bg); color: var(--color-success); }
+.badge-missing { background: var(--color-danger-bg); color: var(--color-danger); }
+
+/* ---------------------------------------------------------- banners -- */
+
+.info-banner {
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary-bg);
+  color: #3730a3;
+  border-radius: var(--radius-md);
+  padding: .8rem 1.1rem;
+  font-size: .88rem;
+  margin: .6rem 0 var(--space-md) 0;
+}
+
+/* -------------------------------------------------------------- diff -- */
+
+.diff-box {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: #fafafa;
+  padding: .6rem .8rem;
+  font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: .8rem;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.diff-line { padding: .05rem .35rem; border-radius: 3px; white-space: pre-wrap; margin: .05rem 0; }
+.diff-add { background: var(--color-success-bg); color: #166534; }
+.diff-del { background: var(--color-danger-bg); color: #991b1b; }
+.diff-eq { color: #475569; }
+
+/* ---------------------------------------------------------------- misc -- */
+
+.footnote { color: var(--color-text-muted); font-size: .78rem; margin-top: var(--space-xl); }
+
+.model-badge {
+  display: inline-block;
+  background: var(--color-primary-bg);
+  color: #3730a3;
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-pill);
+  padding: .35rem .9rem;
+  font-size: .82rem;
+  font-weight: 600;
+  margin-bottom: var(--space-lg);
+}
+.model-badge-detail { font-weight: 400; opacity: .75; margin-left: .3rem; }
+.model-badge-error { background: var(--color-danger-bg); color: var(--color-danger); border-color: var(--color-danger); }
