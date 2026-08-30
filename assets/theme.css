@@ -77,6 +77,75 @@ footer { visibility: hidden; }
   margin: var(--space-lg) 0 var(--space-sm) 0;
 }
 
+.section-header {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: var(--space-md);
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+
+/* ----------------------------------------------------------- sidebar -- */
+
+.sidebar-title {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--color-text);
+  margin-top: .25rem;
+}
+
+.sidebar-status-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: .75rem .9rem;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+.sidebar-status-card .status-title {
+  font-size: .7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--color-text-muted);
+  margin-bottom: .3rem;
+}
+.sidebar-status-card .status-model { font-size: .92rem; font-weight: 700; color: var(--color-primary); }
+.sidebar-status-card .status-detail { font-size: .76rem; color: var(--color-text-muted); margin-top: .15rem; }
+.sidebar-status-card.status-error { border-color: var(--color-danger); }
+.sidebar-status-card.status-error .status-model { color: var(--color-danger); }
+
+/* ----------------------------------------------------------- stepper -- */
+
+.stepper {
+  display: flex;
+  align-items: center;
+  margin: 0 0 var(--space-lg) 0;
+}
+.stepper-step { display: flex; align-items: center; gap: .55rem; }
+.stepper-step .step-circle {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .74rem;
+  font-weight: 700;
+  border: 2px solid var(--color-border);
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+}
+.stepper-step .step-label { font-size: .82rem; font-weight: 600; color: var(--color-text-muted); white-space: nowrap; }
+.stepper-step.active .step-circle { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+.stepper-step.active .step-label { color: var(--color-text); }
+.stepper-step.done .step-circle { background: var(--color-success); border-color: var(--color-success); color: #fff; }
+.stepper-step.done .step-label { color: var(--color-text); }
+.stepper-line { flex: 1; height: 2px; background: var(--color-border); margin: 0 .7rem; }
+.stepper-line.done { background: var(--color-success); }
+
 /* ------------------------------------------------------------ cards -- */
 
 .score-card {
