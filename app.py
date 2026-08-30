@@ -35,6 +35,33 @@ st.set_page_config(
     layout="wide",
 )
 
+# ------------------------------------------------------------- deployment --
+# src/rewriter.py reads its Gemini key(s)/model names via os.environ (from
+# .env locally). Streamlit Cloud instead exposes secrets via st.secrets,
+# which is NOT auto-copied into os.environ -- bridge it here rather than
+# importing streamlit into src/rewriter.py, so the pipeline layer stays
+# framework-agnostic. Must run before the first call into src.rewriter
+# (render_model_status_card() in the sidebar, below), since its key
+# rotator is a lazily-initialized module-level singleton. st.secrets
+# raises StreamlitSecretNotFoundError just from being touched when no
+# secrets.toml exists (confirmed locally) -- caught here so a plain local
+# .env setup with no .streamlit/secrets.toml never crashes.
+
+
+def _sync_secret_to_env(key: str) -> None:
+    if os.environ.get(key):
+        return
+    try:
+        value = st.secrets.get(key)
+    except Exception:
+        return
+    if value:
+        os.environ[key] = str(value)
+
+
+for _secret_key in ("GEMINI_API_KEY", "GEMINI_API_KEYS", "GEMINI_MODEL", "GEMINI_FALLBACK_MODEL"):
+    _sync_secret_to_env(_secret_key)
+
 # ---------------------------------------------------------------- styling --
 # All color/spacing/radius tokens and component classes live in
 # assets/theme.css -- this is the single place to change the look.
