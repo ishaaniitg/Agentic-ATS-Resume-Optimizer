@@ -333,3 +333,20 @@ footer { visibility: hidden; }
 }
 .model-badge-detail { font-weight: 400; opacity: .75; margin-left: .3rem; }
 .model-badge-error { background: var(--color-danger-bg); color: var(--color-danger); border-color: var(--color-danger); }
+
+/* ------------------------------------------------------- responsive -- */
+/* st.columns already stacks vertically below Streamlit's own ~640px
+   breakpoint -- these rules only cover the hand-rolled flex/HTML
+   components (hero, stepper) that don't get that behavior for free. */
+
+@media (max-width: 480px) {
+  .app-hero { padding: 1.25rem 1.25rem; }
+  .app-hero h1 { font-size: 1.3rem; }
+  .app-hero p { font-size: .88rem; }
+
+  .stepper { flex-wrap: wrap; row-gap: .5rem; }
+  .stepper-step .step-label { font-size: .74rem; }
+  .stepper-line { min-width: 20px; margin: 0 .4rem; }
+
+  .sidebar-title { font-size: 1.02rem; }
+}
