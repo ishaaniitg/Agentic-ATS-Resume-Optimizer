@@ -8,4 +8,5 @@ tenacity
 python-dotenv
 streamlit
 reportlab
+plotly
 # after installing, also run: python -m spacy download en_core_web_sm

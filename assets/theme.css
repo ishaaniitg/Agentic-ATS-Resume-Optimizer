@@ -216,6 +216,36 @@ footer { visibility: hidden; }
 .diff-del { background: var(--color-danger-bg); color: #991b1b; }
 .diff-eq { color: #475569; }
 
+/* --------------------------------------------------------- subscores -- */
+
+.subscore-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: .82rem;
+  color: var(--color-text-muted);
+  margin: .5rem 0 .1rem 0;
+}
+.subscore-value { font-weight: 700; color: var(--color-text); }
+
+.info-tooltip {
+  font-size: .78rem;
+  color: var(--color-primary);
+  cursor: help;
+  border-bottom: 1px dotted var(--color-primary);
+}
+
+.delta-badge {
+  display: inline-block;
+  padding: .15rem .6rem;
+  border-radius: var(--radius-pill);
+  font-size: .78rem;
+  font-weight: 700;
+  margin-bottom: .6rem;
+}
+.delta-up { background: var(--color-success-bg); color: var(--color-success); }
+.delta-down { background: var(--color-danger-bg); color: var(--color-danger); }
+.delta-rejected { background: var(--color-danger-bg); color: var(--color-danger); }
+
 /* ------------------------------------------------------------- upload -- */
 
 [data-testid="stFileUploaderDropzone"] {

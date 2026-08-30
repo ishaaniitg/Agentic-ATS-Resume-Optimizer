@@ -18,6 +18,7 @@ import html
 import os
 import tempfile
 
+import plotly.graph_objects as go
 import streamlit as st
 from google.genai import errors as genai_errors
 
@@ -88,6 +89,52 @@ def render_score_card(label: str, score: float) -> None:
         unsafe_allow_html=True,
     )
     st.progress(min(max(score / 100, 0.0), 1.0))
+
+
+def render_score_gauge(label: str, score: float, target_score: float) -> None:
+    """Radial gauge for the ATS match score -- red/amber/green zones with
+    the target score marked as a threshold line, replacing a plain number."""
+    fig = go.Figure(
+        go.Indicator(
+            mode="gauge+number",
+            value=score,
+            number={"suffix": "%", "font": {"size": 34, "color": "#1e293b"}},
+            gauge={
+                "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "#94a3b8"},
+                "bar": {"color": "#4f46e5", "thickness": 0.28},
+                "bgcolor": "white",
+                "borderwidth": 0,
+                "steps": [
+                    {"range": [0, 50], "color": "#fee2e2"},
+                    {"range": [50, 80], "color": "#fef3c7"},
+                    {"range": [80, 100], "color": "#dcfce7"},
+                ],
+                "threshold": {
+                    "line": {"color": "#1e293b", "width": 3},
+                    "thickness": 0.9,
+                    "value": target_score,
+                },
+            },
+        )
+    )
+    fig.update_layout(
+        height=200,
+        margin=dict(l=25, r=25, t=10, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+        font={"family": "Inter, sans-serif"},
+    )
+    st.markdown(f'<div class="section-label" style="margin:0 0 -.5rem 0">{html.escape(label)}</div>', unsafe_allow_html=True)
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.caption(f"Target marked at {target_score:.0f}%")
+
+
+def render_subscore_bar(label: str, value: float) -> None:
+    st.markdown(
+        f'<div class="subscore-row"><span>{html.escape(label)}</span>'
+        f'<span class="subscore-value">{value:.1f}%</span></div>',
+        unsafe_allow_html=True,
+    )
+    st.progress(min(max(value / 100, 0.0), 1.0))
 
 
 def render_stat_card(label: str, value: str, pill: str | None = None) -> None:
@@ -349,8 +396,9 @@ with main_col:
                 result = candidate_results["score_result"]
                 score_col, kw_col = st.columns([1, 2])
                 with score_col:
-                    render_score_card("ATS match score", result.score)
-                    st.caption(f"= 50% semantic ({result.semantic_score:.1f}%) + 50% keyword ({result.keyword_score:.1f}%)")
+                    render_score_gauge("ATS match score", result.score, target_score)
+                    render_subscore_bar("Semantic match", result.semantic_score)
+                    render_subscore_bar("Keyword match", result.keyword_score)
                 with kw_col:
                     mcol, xcol = st.columns(2)
                     with mcol:
@@ -360,8 +408,15 @@ with main_col:
                         st.markdown("**⚠️ Missing keywords**")
                         render_badges(result.missing_keywords, "missing")
                     if result.conceptual_gaps:
-                        st.markdown("**🧠 Conceptual skill gaps** (not present anywhere, even under different wording)")
-                        render_badges(result.conceptual_gaps, "missing")
+                        with st.expander("🧠 Conceptual skill gaps"):
+                            st.markdown(
+                                '<span class="info-tooltip" title="Skills the job conceptually '
+                                'needs but that don\'t appear anywhere in the resume, even '
+                                'phrased differently -- distinct from missing keywords, which '
+                                'are exact terms.">ⓘ What does this mean?</span>',
+                                unsafe_allow_html=True,
+                            )
+                            render_badges(result.conceptual_gaps, "missing")
 
             with section("🛠️", "Rewrite + Truthfulness Loop"):
                 if st.button("✍️  Rewrite", type="primary"):
@@ -382,13 +437,23 @@ with main_col:
                     loop_result = candidate_results["loop_result"]
 
                     st.markdown("**Per-iteration log**")
+                    prev_score = loop_result.history[0].score if loop_result.history else 0.0
                     for log in loop_result.history:
                         if log.iteration == 0:
                             st.markdown(f"🏁 &nbsp;**Iteration 0** (initial parse) -- score **{log.score:.1f}%**", unsafe_allow_html=True)
                             continue
 
-                        status_label = "✅ Passed" if log.accepted else "❌ Rejected"
-                        with st.expander(f"Iteration {log.iteration} · score {log.score:.1f}% · {status_label}"):
+                        if log.accepted:
+                            delta = log.score - prev_score
+                            prev_score = log.score
+                            delta_badge = f'<span class="delta-badge {"delta-up" if delta >= 0 else "delta-down"}">{delta:+.1f}%</span>'
+                            title = f"Iteration {log.iteration} · score {log.score:.1f}% · ✅ Passed"
+                        else:
+                            delta_badge = '<span class="delta-badge delta-rejected">⛔ rejected</span>'
+                            title = f"Iteration {log.iteration} · ⛔ Rejected by truthfulness check"
+
+                        with st.expander(title):
+                            st.markdown(delta_badge, unsafe_allow_html=True)
                             if log.accepted and log.changed_sections:
                                 for section_name, (before, after) in log.changed_sections.items():
                                     st.markdown(f"**Section: {section_name}**")
@@ -405,7 +470,7 @@ with main_col:
                 with section("🏆", "Final Result"):
                     f1, f2, f3 = st.columns(3)
                     with f1:
-                        render_score_card("Final score", loop_result.best_score)
+                        render_score_gauge("Final score", loop_result.best_score, target_score)
                     with f2:
                         render_stat_card("Iterations run", loop_result.iterations_run)
                     with f3:
