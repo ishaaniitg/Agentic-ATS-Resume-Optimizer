@@ -167,6 +167,41 @@ def stepper_html(steps: list[str], current_index: int) -> str:
     return "".join(parts)
 
 
+def render_parse_error(exc: Exception) -> None:
+    """Human-readable parse/OCR failure state -- distinguishes the specific
+    ParseError/ValueError causes raised by src/parser.py rather than
+    surfacing a raw exception string with no context."""
+    msg = str(exc)
+    if isinstance(exc, ValueError):
+        st.error("⚠️ **Unsupported file type.** Only PDF resumes are supported -- please upload a `.pdf` file.")
+    elif "Poppler" in msg or "Tesseract" in msg:
+        st.error(
+            "⚠️ **This looks like a scanned resume.** Reading it needs OCR, but a required "
+            f"OCR tool isn't installed on this machine.\n\nDetails: {msg}"
+        )
+    elif "No text could be extracted" in msg:
+        st.error(
+            "⚠️ **Couldn't read any text from this PDF**, even with OCR. The file may be "
+            "corrupted, password-protected, or blank."
+        )
+    else:
+        st.error(f"⚠️ **Couldn't parse this resume.** {msg}")
+
+
+def render_upload_chip(name: str, size_bytes: int, key: str) -> bool:
+    """Renders a filename + size chip for a persisted (already-uploaded)
+    file, with a remove button. Returns True if the user clicked remove."""
+    chip_col, remove_col = st.columns([6, 1])
+    with chip_col:
+        st.markdown(
+            f'<div class="upload-chip">📄 <b>{html.escape(name)}</b>'
+            f'<span class="upload-chip-size">{size_bytes / 1024:.1f} KB</span></div>',
+            unsafe_allow_html=True,
+        )
+    with remove_col:
+        return st.button("✕", key=key, help=f"Remove {name}")
+
+
 def render_badges(keywords: list[str], kind: str) -> None:
     if not keywords:
         st.caption("(none)")
@@ -263,6 +298,12 @@ with main_col:
                 has_resume = "uploaded_pdf" in candidate_results
                 if resume_file is None and has_resume:
                     st.caption(f"📎 Using previously uploaded **{candidate_results['uploaded_pdf']['name']}** -- upload a new file to replace it.")
+                if has_resume and "resume_text" in candidate_results:
+                    st.markdown(
+                        f'<div class="upload-success">✅ Parsed successfully -- '
+                        f'{len(candidate_results["resume_text"]):,} characters extracted</div>',
+                        unsafe_allow_html=True,
+                    )
                 c1, c2 = st.columns(2)
                 with c1:
                     target_score = st.number_input(
@@ -276,8 +317,19 @@ with main_col:
                     )
             with jd_col:
                 jd_text = st.text_area("Job description", height=190, key="shared_jd")
+                _word_count = len(jd_text.split())
+                st.caption(f"{len(jd_text):,} characters · {_word_count:,} words")
 
-            if st.button("🔍  Analyze", type="primary", disabled=not (has_resume and jd_text)):
+            if not has_resume and not jd_text:
+                analyze_help = "Upload a resume and paste a job description to enable analysis."
+            elif not has_resume:
+                analyze_help = "Upload a resume (PDF) to enable analysis."
+            elif not jd_text:
+                analyze_help = "Paste a job description to enable analysis."
+            else:
+                analyze_help = "Parse the resume and score it against the job description."
+
+            if st.button("🔍  Analyze", type="primary", disabled=not (has_resume and jd_text), help=analyze_help):
                 try:
                     upload = candidate_results["uploaded_pdf"]
                     resume_path = _save_bytes_to_temp(upload["name"], upload["bytes"])
@@ -287,7 +339,7 @@ with main_col:
                     candidate_results["score_result"] = score_resume(resume_text, jd_text)
                     candidate_results.pop("loop_result", None)  # stale after re-analyze
                 except (ParseError, ValueError) as exc:
-                    st.error(f"Parsing failed: {exc}")
+                    render_parse_error(exc)
 
         if "resume_text" in candidate_results:
             with section("📄", "Parsed Resume"):
@@ -414,12 +466,29 @@ with main_col:
                 sync_multi_upload(resume_files, employer_results, "uploaded_pdfs")
                 has_resumes = bool(employer_results.get("uploaded_pdfs"))
                 if not resume_files and has_resumes:
-                    names = ", ".join(u["name"] for u in employer_results["uploaded_pdfs"])
-                    st.caption(f"📎 Using previously uploaded: **{names}** -- upload new files to replace them.")
+                    st.caption("📎 Using previously uploaded resumes -- remove any you don't want, or upload new files to replace them.")
+                    remove_idx = None
+                    for i, u in enumerate(employer_results["uploaded_pdfs"]):
+                        if render_upload_chip(u["name"], len(u["bytes"]), key=f"remove_pdf_{i}"):
+                            remove_idx = i
+                    if remove_idx is not None:
+                        employer_results["uploaded_pdfs"].pop(remove_idx)
+                        has_resumes = bool(employer_results["uploaded_pdfs"])
             with jd_col:
                 jd_text = st.text_area("Job description", height=150, key="shared_jd")
+                _word_count = len(jd_text.split())
+                st.caption(f"{len(jd_text):,} characters · {_word_count:,} words")
 
-            if st.button("📊  Rank", type="primary", disabled=not (has_resumes and jd_text)):
+            if not has_resumes and not jd_text:
+                rank_help = "Upload one or more resumes and paste a job description to enable ranking."
+            elif not has_resumes:
+                rank_help = "Upload one or more resumes (PDF) to enable ranking."
+            elif not jd_text:
+                rank_help = "Paste a job description to enable ranking."
+            else:
+                rank_help = "Rank all uploaded resumes against this job description."
+
+            if st.button("📊  Rank", type="primary", disabled=not (has_resumes and jd_text), help=rank_help):
                 resume_paths = []
                 name_by_path = {}
                 for upload in employer_results["uploaded_pdfs"]:
