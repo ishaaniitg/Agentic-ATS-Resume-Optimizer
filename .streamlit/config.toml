@@ -8,3 +8,12 @@ font = "sans serif"
 
 [server]
 headless = true
+# Silences repeated "ModuleNotFoundError: No module named 'torchvision'"
+# noise: the local hot-reload watcher walks transformers' optional
+# image-processing submodules (pulled in via sentence-transformers) and
+# logs a traceback for each one it can't import. Non-fatal -- it only
+# ever affected log volume, never behavior. This setting governs local
+# auto-rerun-on-file-change only; Streamlit Cloud runs the app from a
+# fresh container per deploy and does not rely on the file watcher, so
+# the deployed app is unaffected.
+fileWatcherType = "none"

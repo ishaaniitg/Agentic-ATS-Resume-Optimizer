@@ -118,9 +118,20 @@ def render_score_card(label: str, score: float) -> None:
     st.progress(min(max(score / 100, 0.0), 1.0))
 
 
-def render_score_gauge(label: str, score: float, target_score: float) -> None:
+def render_score_gauge(label: str, score: float, target_score: float, key: str) -> None:
     """Radial gauge for the ATS match score -- red/amber/green zones with
-    the target score marked as a threshold line, replacing a plain number."""
+    the target score marked as a threshold line, replacing a plain number.
+
+    `key` is required, not optional: the figure below is built purely from
+    `score` and `target_score` (`label` only reaches the surrounding
+    markdown/caption), so two gauges showing the same score against the
+    same target produce byte-identical figures. Streamlit derives an
+    element's auto-generated ID from its type + parameters, so that
+    collides and raises StreamlitDuplicateElementId -- which happens
+    routinely here, since the final score equals the initial score
+    whenever no rewrite iteration beat iteration 0. Callers must pass a
+    key describing *which* gauge this is, never one derived from the
+    score, since distinct gauges can legitimately share a value."""
     fig = go.Figure(
         go.Indicator(
             mode="gauge+number",
@@ -151,7 +162,7 @@ def render_score_gauge(label: str, score: float, target_score: float) -> None:
         font={"family": "Inter, sans-serif"},
     )
     st.markdown(f'<div class="section-label" style="margin:0 0 -.5rem 0">{html.escape(label)}</div>', unsafe_allow_html=True)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key=key)
     st.caption(f"Target marked at {target_score:.0f}%")
 
 
@@ -447,7 +458,7 @@ with main_col:
                 result = candidate_results["score_result"]
                 score_col, kw_col = st.columns([1, 2])
                 with score_col:
-                    render_score_gauge("ATS match score", result.score, target_score)
+                    render_score_gauge("ATS match score", result.score, target_score, key="gauge_initial")
                     render_subscore_bar("Semantic match", result.semantic_score)
                     render_subscore_bar("Keyword match", result.keyword_score)
                 with kw_col:
@@ -561,7 +572,7 @@ with main_col:
                 with section("🏆", "Final Result"):
                     f1, f2, f3 = st.columns(3)
                     with f1:
-                        render_score_gauge("Final score", loop_result.best_score, target_score)
+                        render_score_gauge("Final score", loop_result.best_score, target_score, key="gauge_final")
                     with f2:
                         render_stat_card("Iterations run", loop_result.iterations_run)
                     with f3:
