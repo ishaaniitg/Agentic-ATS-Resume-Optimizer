@@ -569,45 +569,58 @@ with main_col:
             name_by_path = employer_results["name_by_path"]
 
             with section("🏆", "Ranked Candidates"):
-                st.dataframe(
-                    [
-                        {
-                            "Rank": i,
-                            "Candidate": name_by_path.get(r.resume_path, r.resume_path),
-                            "Score": r.score,
-                            "Status": "⚠️ Parse error" if r.error else "✅ OK",
-                        }
-                        for i, r in enumerate(rankings, start=1)
-                    ],
-                    column_config={
-                        "Rank": st.column_config.NumberColumn("Rank", width="small"),
-                        "Score": st.column_config.ProgressColumn(
-                            "Score", min_value=0, max_value=100, format="%.1f%%"
-                        ),
-                    },
-                    hide_index=True,
-                    use_container_width=True,
-                )
+                sort_col, filter_col = st.columns(2)
+                with sort_col:
+                    sort_choice = st.selectbox(
+                        "Sort by",
+                        ["Score (high to low)", "Score (low to high)", "Name (A-Z)"],
+                        key="employer_sort",
+                    )
+                with filter_col:
+                    min_score = st.slider("Minimum score", 0, 100, 0, key="employer_min_score")
 
-            with section("🔍", "Gap Summaries"):
-                for r in rankings:
+                visible = [r for r in rankings if r.score >= min_score]
+                if sort_choice == "Score (high to low)":
+                    visible.sort(key=lambda r: r.score, reverse=True)
+                elif sort_choice == "Score (low to high)":
+                    visible.sort(key=lambda r: r.score)
+                else:
+                    visible.sort(key=lambda r: name_by_path.get(r.resume_path, r.resume_path).lower())
+
+                if not visible:
+                    st.caption(f"No candidates scored {min_score}% or higher.")
+
+                for i, r in enumerate(visible, start=1):
                     label = name_by_path.get(r.resume_path, r.resume_path)
-                    status = "⚠️" if r.error else "✅"
-                    with st.expander(f"{status} {label} -- score {r.score:.1f}%"):
-                        if r.error:
-                            st.error(r.error)
-                            continue
-                        st.caption(f"= 50% semantic ({r.semantic_score:.1f}%) + 50% keyword ({r.keyword_score:.1f}%)")
-                        mcol, xcol = st.columns(2)
-                        with mcol:
-                            st.markdown("**✅ Matched**")
-                            render_badges(r.matched_keywords, "matched")
-                        with xcol:
-                            st.markdown("**⚠️ Missing**")
-                            render_badges(r.missing_keywords, "missing")
-                        if r.conceptual_gaps:
-                            st.markdown("**🧠 Conceptual skill gaps**")
-                            render_badges(r.conceptual_gaps, "missing")
+                    with st.container(border=True):
+                        rank_col, name_col, score_col, status_col = st.columns([0.6, 2.4, 3, 1.3])
+                        with rank_col:
+                            st.markdown(f'<div class="rank-badge">{i}</div>', unsafe_allow_html=True)
+                        with name_col:
+                            st.markdown(f'<div class="candidate-name">{html.escape(label)}</div>', unsafe_allow_html=True)
+                        with score_col:
+                            st.progress(min(max(r.score / 100, 0.0), 1.0))
+                            st.caption(f"{r.score:.1f}%")
+                        with status_col:
+                            status_cls = "badge-missing" if r.error else "badge-matched"
+                            status_text = "⚠️ Parse error" if r.error else "✅ OK"
+                            st.markdown(f'<span class="badge {status_cls}">{status_text}</span>', unsafe_allow_html=True)
+
+                        with st.expander("View gap summary"):
+                            if r.error:
+                                st.error(r.error)
+                            else:
+                                st.caption(f"= 50% semantic ({r.semantic_score:.1f}%) + 50% keyword ({r.keyword_score:.1f}%)")
+                                mcol, xcol = st.columns(2)
+                                with mcol:
+                                    st.markdown("**✅ Matched**")
+                                    render_badges(r.matched_keywords, "matched")
+                                with xcol:
+                                    st.markdown("**⚠️ Missing**")
+                                    render_badges(r.missing_keywords, "missing")
+                                if r.conceptual_gaps:
+                                    st.markdown("**🧠 Conceptual skill gaps**")
+                                    render_badges(r.conceptual_gaps, "missing")
 
         step_index = 1 if "rankings" in employer_results else 0
         stepper_slot.markdown(stepper_html(["Upload", "Rank"], step_index), unsafe_allow_html=True)

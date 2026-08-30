@@ -216,6 +216,27 @@ footer { visibility: hidden; }
 .diff-del { background: var(--color-danger-bg); color: #991b1b; }
 .diff-eq { color: #475569; }
 
+/* ------------------------------------------------------ ranked list -- */
+
+.rank-badge {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: .85rem;
+  margin-top: .3rem;
+}
+.candidate-name {
+  font-weight: 700;
+  font-size: .95rem;
+  margin-top: .45rem;
+}
+
 /* --------------------------------------------------------- subscores -- */
 
 .subscore-row {
