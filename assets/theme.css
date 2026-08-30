@@ -216,6 +216,17 @@ footer { visibility: hidden; }
 .diff-del { background: var(--color-danger-bg); color: #991b1b; }
 .diff-eq { color: #475569; }
 
+/* ------------------------------------------------------- empty state -- */
+
+.empty-state {
+  text-align: center;
+  padding: var(--space-xl) var(--space-md);
+  color: var(--color-text-muted);
+}
+.empty-state-icon { font-size: 2.2rem; margin-bottom: .5rem; opacity: .8; }
+.empty-state-title { font-weight: 700; color: var(--color-text); font-size: 1rem; margin-bottom: .3rem; }
+.empty-state-caption { font-size: .85rem; max-width: 440px; margin: 0 auto; line-height: 1.5; }
+
 /* ------------------------------------------------------ ranked list -- */
 
 .rank-badge {

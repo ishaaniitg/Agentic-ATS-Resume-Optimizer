@@ -278,6 +278,19 @@ def render_line_diff(before: str, after: str) -> None:
     st.markdown(f'<div class="diff-box">{"".join(parts)}</div>', unsafe_allow_html=True)
 
 
+def render_empty_state(icon: str, title: str, caption: str) -> None:
+    st.markdown(
+        f"""
+        <div class="empty-state">
+          <div class="empty-state-icon">{icon}</div>
+          <div class="empty-state-title">{html.escape(title)}</div>
+          <div class="empty-state-caption">{html.escape(caption)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def section(icon: str, title: str):
     """Returns a bordered container with an icon + header already rendered
     inside it -- the standard wrapper for every phase section below."""
@@ -378,17 +391,28 @@ with main_col:
 
             if st.button("🔍  Analyze", type="primary", disabled=not (has_resume and jd_text), help=analyze_help):
                 try:
-                    upload = candidate_results["uploaded_pdf"]
-                    resume_path = _save_bytes_to_temp(upload["name"], upload["bytes"])
-                    resume_text = parse_resume(resume_path)
-                    candidate_results["resume_text"] = resume_text
-                    candidate_results["jd_text"] = jd_text
-                    candidate_results["score_result"] = score_resume(resume_text, jd_text)
-                    candidate_results.pop("loop_result", None)  # stale after re-analyze
+                    with st.status("Parsing resume...", expanded=False) as status:
+                        upload = candidate_results["uploaded_pdf"]
+                        resume_path = _save_bytes_to_temp(upload["name"], upload["bytes"])
+                        resume_text = parse_resume(resume_path)
+                        status.update(label="Scoring against job description...")
+                        candidate_results["resume_text"] = resume_text
+                        candidate_results["jd_text"] = jd_text
+                        candidate_results["score_result"] = score_resume(resume_text, jd_text)
+                        candidate_results.pop("loop_result", None)  # stale after re-analyze
+                        status.update(label="Parsed and scored", state="complete")
+                    st.toast("Resume parsed and scored successfully", icon="✅")
                 except (ParseError, ValueError) as exc:
                     render_parse_error(exc)
+                    st.toast("Resume parsing failed", icon="⚠️")
 
-        if "resume_text" in candidate_results:
+        if "resume_text" not in candidate_results:
+            render_empty_state(
+                "📭", "No analysis yet",
+                "Upload a resume and a job description above, then click Analyze to see "
+                "the parsed resume and match score here.",
+            )
+        else:
             with section("📄", "Parsed Resume"):
                 st.text_area("Extracted text", candidate_results["resume_text"], height=220, label_visibility="collapsed")
 
@@ -419,19 +443,59 @@ with main_col:
                             render_badges(result.conceptual_gaps, "missing")
 
             with section("🛠️", "Rewrite + Truthfulness Loop"):
-                if st.button("✍️  Rewrite", type="primary"):
+
+                def _run_rewrite() -> None:
+                    # run_rewrite_loop() is a single blocking call with no
+                    # progress callback, so this status label reflects the
+                    # overall pipeline stage rather than a live per-iteration
+                    # count -- getting "iteration 2 of 5" would need a hook
+                    # added to src/agent_loop.py, which is out of scope here.
                     try:
-                        with st.spinner("Running generator -> truthfulness check -> judge loop..."):
+                        with st.status(
+                            f"Running rewrite loop (up to {int(max_iterations)} iterations): "
+                            "generator -> truthfulness check -> judge...",
+                            expanded=False,
+                        ) as status:
                             candidate_results["loop_result"] = run_rewrite_loop(
                                 candidate_results["resume_text"],
                                 candidate_results["jd_text"],
                                 target_score=target_score,
                                 max_iterations=int(max_iterations),
                             )
+                            status.update(
+                                label=f"Completed after {candidate_results['loop_result'].iterations_run} iteration(s)",
+                                state="complete",
+                            )
+                        st.toast("Rewrite loop completed", icon="✅")
                     except genai_errors.ClientError as exc:
-                        st.error(f"Gemini API error (not a pipeline bug): {exc}")
+                        candidate_results["rewrite_error"] = ("client", str(exc))
+                        st.toast("Gemini API error -- see details below", icon="⚠️")
                     except genai_errors.ServerError as exc:
-                        st.error(f"Gemini API unavailable after retries (not a pipeline bug): {exc}")
+                        candidate_results["rewrite_error"] = ("server", str(exc))
+                        st.toast("Gemini API unavailable -- try again shortly", icon="⚠️")
+
+                if st.button("✍️  Rewrite", type="primary"):
+                    candidate_results.pop("rewrite_error", None)
+                    _run_rewrite()
+
+                if "rewrite_error" in candidate_results:
+                    kind, msg = candidate_results["rewrite_error"]
+                    if kind == "client" and ("RESOURCE_EXHAUSTED" in msg or "429" in msg):
+                        st.error(
+                            "⚠️ Gemini API quota exceeded across every configured key/model "
+                            "combination for today. This isn't a pipeline bug -- try again "
+                            "later, or add another key to `GEMINI_API_KEYS` in `.env`."
+                        )
+                    elif kind == "client":
+                        st.error(f"⚠️ Gemini rejected the request (not a pipeline bug): {msg}")
+                    else:
+                        st.error(
+                            "⚠️ Gemini API is temporarily unavailable, even after automatic "
+                            "retries. This isn't a pipeline bug -- please try again shortly."
+                        )
+                    if st.button("🔁  Retry rewrite", key="retry_rewrite"):
+                        candidate_results.pop("rewrite_error", None)
+                        _run_rewrite()
 
                 if "loop_result" in candidate_results:
                     loop_result = candidate_results["loop_result"]
@@ -561,10 +625,19 @@ with main_col:
                     resume_paths.append(path)
                     name_by_path[path] = upload["name"]
 
-                employer_results["rankings"] = employer_mode(resume_paths, jd_text)
-                employer_results["name_by_path"] = name_by_path
+                with st.status(f"Scoring {len(resume_paths)} resume(s) against the job description...", expanded=False) as status:
+                    employer_results["rankings"] = employer_mode(resume_paths, jd_text)
+                    employer_results["name_by_path"] = name_by_path
+                    status.update(label="Ranking complete", state="complete")
+                st.toast(f"Ranked {len(resume_paths)} candidate(s)", icon="✅")
 
-        if "rankings" in employer_results:
+        if "rankings" not in employer_results:
+            render_empty_state(
+                "📭", "No candidates ranked yet",
+                "Upload one or more resumes and a job description above, then click Rank "
+                "to see the ranked list here.",
+            )
+        else:
             rankings = employer_results["rankings"]
             name_by_path = employer_results["name_by_path"]
 
