@@ -2,4 +2,6 @@ pymupdf
 pdf2image
 pytesseract
 spacy
+google-genai
+python-dotenv
 # after installing, also run: python -m spacy download en_core_web_sm

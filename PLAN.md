@@ -89,7 +89,7 @@ excludes `.env` from commit 1.
 - Python
 - PyMuPDF, pdf2image, pytesseract (parsing)
 - spaCy or sentence-transformers (scoring)
-- An LLM API (OpenAI or Claude) for the Generator agent
+- An LLM API (Google Gemini, via `google-genai`) for the Generator agent
 - Simple CLI or Streamlit UI (optional, only if time allows)
 
 ## Rough time estimate
